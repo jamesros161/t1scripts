@@ -230,6 +230,10 @@ class LogFunctions(object):
         self.uris = Report(self.parsed_logs, ['uri'], self.lines)
         self.responses = Report(self.parsed_logs, ['code'], self.lines)
         self.hourly = HourReport(self.parsed_logs, ['hour'], self.lines)
+        self.duplicate = Report(
+            self.parsed_logs,
+            ['code', 'remote_ip', 'uri'],
+            self.lines, mergefields="Request Details")
         self.summary = SummaryReport(
             self.parsed_logs,
             ['remote_ip', 'user_agent', 'uri', 'code'],
@@ -325,6 +329,9 @@ class LogFunctions(object):
         parsed_line['user_agent'] = self.get_user_agent(
             parsed_line['browser_string'])
         parsed_line['hour'] = parsed_line['datetime'].split(":")[1]
+        if 'remote_ip' in parsed_line.keys():
+            parsed_line['remote_ip'] = Report.format_ip(
+                parsed_line['remote_ip'])
         return parsed_line
 
     def get_parsed_logs(self, user, domain):
@@ -346,25 +353,34 @@ class LogFunctions(object):
 
 class Report(object):
     """Formats lists into tables"""
-    def __init__(self, parsed_logs, field_list, lines):
+    def __init__(self, parsed_logs, field_list, lines, mergefields=False):
         self.parsed_logs = parsed_logs
         self.field_list = field_list
         self.lines = lines
+        self.mergefields = mergefields
         self.report_table = {}
 
     def generate_report(self):
         """Generates formatted table from report lists"""
         field_names = []
         self.field_list.sort()
+        if self.mergefields:
+            field_names = ([mergefields, 'count'])
         for field in self.field_list:
             field_names.extend([field, field + ' count'])
         for log_name, log in self.parsed_logs.items():
             field_lists = {}
             this_report = PrettyTable(
                 field_names=field_names, header=True)
-            for field in self.field_list:
-                field_lists[field] = self.get_field_count(
-                    log, field, self.lines)
+            if self.mergefields:
+                field_lists[self.mergefield] = self.get_mergefield_count(
+                    log, field_list, self.lines)
+                self.field_list = [self.mergefield]
+            else:
+                self.field_list.sort()
+                for field in self.field_list:
+                    field_lists[field] = self.get_field_count(
+                        log, field, self.lines)
             i = 0
             rows = []
             while i < (int(self.lines) - 1):
@@ -386,6 +402,17 @@ class Report(object):
                 this_report.align[field] = "l"
             self.report_table[log_name] = this_report
 
+    def get_mergefield_count(self, parsed_log, fields, lines):
+        """creates merged_field list"""
+        mergefield_items = []
+        for line in parsed_log:
+            mergefield_data = [line.get(field) for field in fields]
+            merged_data = "\t".join(field_data)
+        mergefield_counter = Counter(mergefield_items)
+        most_common = field_counter.most_common(int(lines))
+        most_common.reverse()
+        return most_common
+
     def get_field_count(self, parsed_log, field, lines):
         """creates count lists"""
         field_items = []
@@ -395,6 +422,14 @@ class Report(object):
         most_common = field_counter.most_common(int(lines))
         most_common.reverse()
         return most_common
+
+    @staticmethod
+    def format_ip(ip_address):
+        """sets IP address to fixed width of 15 chars"""
+        padded_length = 15
+        ip_length = len(ip_address)
+        leading_space = padded_length - ip_length
+        return str((' ' * leading_space) + str(ip_address))
 
     @staticmethod
     def format_title_header(title):
@@ -425,7 +460,7 @@ class HourReport(Report):
         hour_range = range(0, 24)
         field_names = ['Time']
         for hour in hour_range:
-            field_names.append(str(hour) + ':00')
+            field_names.append(str(hour).zfill(2) + ':00')
         self.report_table = {}
         for log_name, log in self.parsed_logs.items():
             this_report = PrettyTable(
