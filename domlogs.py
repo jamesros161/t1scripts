@@ -60,7 +60,6 @@ def store_args(args):
                 cmd_function = arg[2:]
             if '-' not in arg:
                 cmd_function = arg
-    print(cmd_options)  # pylint: disable=superfluous-parens
     return str(cmd_function), cmd_options, str(cmd_flags)
 
 
