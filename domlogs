@@ -367,7 +367,7 @@ class Report(object):
         field_names = []
         self.field_list.sort()
         if self.mergefields:
-            field_names = ([mergefields, 'count'])
+            field_names = ([self.mergefields, 'count'])
         for field in self.field_list:
             field_names.extend([field, field + ' count'])
         for log_name, log in self.parsed_logs.items():
