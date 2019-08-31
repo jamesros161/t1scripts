@@ -21,6 +21,7 @@ FUNCTIONS = [
     'uris',
     'hourly',
     'responses',
+    'duplicates',
     'summary'
 ]
 
@@ -60,6 +61,7 @@ def get_help():
         "\thourly     : Lists the number of hits per hour for each hour\n"
         "\tresponses  : Lists the number of times each response code was"
         " returned by a request\n"
+        "\tduplicates : Lists duplicate requests"
         "\tsummary    : Displays a summary of data from access logs\n"
     )
     report_options = str(
@@ -230,7 +232,7 @@ class LogFunctions(object):
         self.uris = Report(self.parsed_logs, ['uri'], self.lines)
         self.responses = Report(self.parsed_logs, ['code'], self.lines)
         self.hourly = HourReport(self.parsed_logs, ['hour'], self.lines)
-        self.duplicate = Report(
+        self.duplicates = Report(
             self.parsed_logs,
             ['code', 'remote_ip', 'uri'],
             self.lines, mergefields="Request Details")
