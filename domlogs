@@ -376,7 +376,7 @@ class Report(object):
                 field_names=field_names, header=True)
             if self.mergefields:
                 field_lists[self.mergefield] = self.get_mergefield_count(
-                    log, field_list, self.lines)
+                    log, self.field_list, self.lines)
                 self.field_list = [self.mergefield]
             else:
                 self.field_list.sort()
