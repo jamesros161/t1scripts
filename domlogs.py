@@ -1,4 +1,3 @@
-#!/opt/imh-python/bin/python2.7
 """ Provides summarized analysis of domlogs """
 
 import sys
