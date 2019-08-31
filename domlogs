@@ -6,7 +6,6 @@ import os
 from subprocess import Popen, PIPE
 from collections import Counter
 from shlex import split as shplit
-# import pwd
 from prettytable import PrettyTable
 
 OPTIONS = [
@@ -104,7 +103,6 @@ def store_args(args):
                 cmd_function = arg
     else:
         get_help()
-    print(cmd_options)  # pylint: disable=superfluous-parens
     return str(cmd_function), cmd_options, str(cmd_flags)
 
 
@@ -466,7 +464,8 @@ class SummaryReport(Report):
 def main():
     """Go Start Here"""
     cmd_function, cmd_options, cmd_flags = store_args(sys.argv)
-
+    print(Report.format_title_header('DomLog Report'))
+    print('\n\tProcessing Request....\n')
     valid_options = parse_options(cmd_options)
     parse_function(cmd_function, valid_options)
 
