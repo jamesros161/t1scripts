@@ -235,7 +235,7 @@ class LogFunctions(object):
         self.duplicates = Report(
             self.parsed_logs,
             ['code', 'remote_ip', 'uri'],
-            self.lines, mergefields="Request Details")
+            self.lines, mergefields="Duplicate Requests")
         self.summary = SummaryReport(
             self.parsed_logs,
             ['remote_ip', 'user_agent', 'uri', 'code'],
@@ -360,6 +360,7 @@ class Report(object):
         self.field_list = field_list
         self.lines = lines
         self.mergefields = mergefields
+        self.field_lists = {}
         self.report_table = {}
 
     def generate_report(self):
@@ -368,30 +369,41 @@ class Report(object):
         self.field_list.sort()
         if self.mergefields:
             field_names = ([self.mergefields, 'count'])
-        for field in self.field_list:
-            field_names.extend([field, field + ' count'])
+        else:
+            for field in self.field_list:
+                field_names.extend([field, field + ' count'])
         for log_name, log in self.parsed_logs.items():
             field_lists = {}
             this_report = PrettyTable(
                 field_names=field_names, header=True)
             if self.mergefields:
-                field_lists[self.mergefield] = self.get_mergefield_count(
+                field_data = self.get_mergefield_count(
                     log, self.field_list, self.lines)
-                self.field_list = [self.mergefield]
+                self.field_list = [self.mergefields]
+                if field_data:
+                    if log_name not in self.field_lists.keys():
+                        self.field_lists[log_name] = {}
+                    self.field_lists[log_name][self.mergefields] = field_data
             else:
                 self.field_list.sort()
                 for field in self.field_list:
-                    field_lists[field] = self.get_field_count(
+                    field_data = self.get_field_count(
                         log, field, self.lines)
+                    if field_data:
+                        if log_name not in self.field_lists.keys():
+                            self.field_lists[log_name] = {}
+                        self.field_lists[log_name][field] = field_data
             i = 0
             rows = []
+            if log_name not in self.field_lists.keys():
+                continue
             while i < (int(self.lines) - 1):
                 row = []
-                for field_name in self.field_list:
-                    if i < len(field_lists[field_name]):
+                for field_name in self.field_lists[log_name].keys():
+                    if i < len(self.field_lists[log_name][field_name]):
                         row.extend([
-                            field_lists[field_name][i][0],
-                            field_lists[field_name][i][1]])
+                            self.field_lists[log_name][field_name][i][0],
+                            self.field_lists[log_name][field_name][i][1]])
                     else:
                         row.extend([
                             str(' '),
@@ -409,7 +421,8 @@ class Report(object):
         mergefield_items = []
         for line in parsed_log:
             mergefield_data = [line.get(field) for field in fields]
-            merged_data = "\t".join(mergefield_data)
+            if all(mergefield_data):
+                mergefield_items.append("    ".join(mergefield_data))
         mergefield_counter = Counter(mergefield_items)
         most_common = mergefield_counter.most_common(int(lines))
         most_common.reverse()
