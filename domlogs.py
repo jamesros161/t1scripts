@@ -1,0 +1,430 @@
+#!/opt/imh-python/bin/python2.7
+""" Provides summarized analysis of domlogs """
+
+import sys
+import os
+from subprocess import Popen, PIPE
+from collections import Counter
+from shlex import split as shplit
+# import pwd
+from prettytable import PrettyTable
+
+OPTIONS = [
+    'user',
+    'domain',
+    'columns',
+    'lines'
+]
+
+FUNCTIONS = [
+    'ips',
+    'useragents',
+    'uris',
+    'hourly',
+    'responses',
+    'summary'
+]
+
+PARSING_FIELDS = [
+    'remote_ip',
+    'identd',
+    'user',
+    'datetime',
+    'offset',
+    'full_request',
+    'code',
+    'size',
+    'referrer',
+    'browser_string'
+]
+
+
+def str(string_literal):
+    """refines str function to force unicode"""
+    return unicode(string_literal)
+
+
+def store_args(args):
+    """Parse's commandline arguments"""
+    cmd_flags = ''
+    cmd_options = {}
+    cmd_function = None
+    del args[0]
+    if args:
+        for arg in args:
+            if arg[0] == '-' and not arg[1] == '-':
+                cmd_flags = arg[1:]
+            if arg[:2] == '--' and '=' in arg:
+                split_arg = arg.split("=", 1)
+                cmd_options[split_arg[0][2:]] = split_arg[1]
+            if arg[:2] == '--' and '=' not in arg:
+                cmd_function = arg[2:]
+            if '-' not in arg:
+                cmd_function = arg
+    print(cmd_options)  # pylint: disable=superfluous-parens
+    return str(cmd_function), cmd_options, str(cmd_flags)
+
+
+def parse_function(cmd_function, valid_options):
+    """Validates that the function entered is a valid function and directs
+    to said function"""
+    log_functions = LogFunctions(valid_options)
+    if cmd_function in FUNCTIONS:
+        if hasattr(log_functions, cmd_function):
+            function_to_run = getattr(log_functions, cmd_function)
+            function_to_run.show()
+        else:
+            sys.exit("Requested Log Function does not exist")
+    else:
+        sys.exit("Requested Log Function does not exist")
+
+
+def parse_options(cmd_options):
+    """parse's options to validate all neceissary options are set
+       If "user" key is not present in cmd_options, extract user from
+       selected domain name. If no domain name is selected, exit with error
+       that at least a domain or user must be selected. If user and domain is
+       selected, validate that the domain belongs to the user """
+    valid_options = {}
+    # if user is not set in cmd arguments, verify
+    for option in cmd_options.keys():
+        if option in OPTIONS:
+            if option != 'user' and option != 'domain':
+                valid_options[option] = cmd_options[option]
+        else:
+            sys.exit("Invalid Option: " + option)
+
+    if 'user' not in cmd_options.keys():
+        if 'domain' in cmd_options.keys():
+            domain_owner = whoowns(cmd_options['domain'])
+            if domain_owner:
+                user = str(domain_owner)
+                if user:
+                    valid_options['user'] = str(user)
+                    valid_options['domain'] = str(cmd_options['domain'])
+                else:
+                    sys.exit(
+                        'No user found for domain ' + cmd_options["domain"])
+            else:
+                sys.exit(
+                    cmd_options["domain"] + "is not configured on this server")
+        else:
+            sys.exit(
+                "If a user is not specified, a valid domain must be specified")
+    else:
+        valid_options['user'] = str(cmd_options['user'])
+        if 'domain' in cmd_options.keys():
+            domain_owner = str(whoowns(cmd_options['domain']))
+            if domain_owner == cmd_options['user']:
+                valid_options['domain'] = str(cmd_options['domain'])
+            else:
+                sys.exit(
+                    cmd_options['domain'] +
+                    " does not belong to cPanel user " +
+                    "or the domain is invalid.")
+    return valid_options
+
+
+def whoowns(domain):
+    """returns account owner or false
+    if domain is not valid"""
+    return run_cmd_str_return([
+        'sudo',
+        '/opt/tier1adv/bin/whoowns',
+        domain
+    ])
+
+
+def run_cmd_str_return(command_array):
+    """Runs Popen Command"""
+    response, error = Popen(
+        command_array,
+        stdout=PIPE,
+        stderr=PIPE,
+        bufsize=-1
+        ).communicate()
+    if error:
+        return False
+    else:
+        return str(response.rstrip())
+
+
+def run_cmd_list_return(command_array):
+    """Runs Popen Command"""
+    response, error = Popen(
+        command_array,
+        stdout=PIPE,
+        stderr=PIPE,
+        bufsize=-1
+    ).communicate()
+    if error:
+        return False
+    else:
+        return response.splitlines()
+
+
+class LogFunctions(object):
+    """ Functions for various log operations"""
+    def __init__(self, user_options):
+        self.user = None
+        if 'user' in user_options:
+            self.user = user_options['user']
+
+        self.domain = None
+        if 'domain' in user_options:
+            self.domain = user_options['domain']
+
+        self.columns = None
+        if 'columns' in user_options:
+            self.columns = user_options['columns']
+
+        self.lines = None
+        if 'lines' in user_options:
+            self.lines = user_options['lines']
+
+        self.parsed_logs = self.get_parsed_logs(self.user, self.domain)
+        self.ips = Report(self.parsed_logs, ['remote_ip'], self.lines)
+        self.useragents = Report(self.parsed_logs, ['user_agent'], self.lines)
+        self.uris = Report(self.parsed_logs, ['uri'], self.lines)
+        self.responses = Report(self.parsed_logs, ['code'], self.lines)
+        self.hourly = HourReport(self.parsed_logs, ['hour'], self.lines)
+        self.summary = SummaryReport(
+            self.parsed_logs,
+            ['remote_ip', 'user_agent', 'uri', 'code'],
+            self.lines)
+
+    def get_user_domlog_dir(self, user):
+        """Returns the directory of the user's domlogs"""
+        dom_log_dir = os.path.join("/var/log/apache2/domlogs", user)
+        return dom_log_dir
+
+    def get_domlog_file_list(self, dom_log_dir, domain=None):
+        """Returns a list of domlog files"""
+        domlog_file_list = []
+        ls_result = run_cmd_list_return([
+            'sudo',
+            'ls',
+            dom_log_dir
+        ])
+        if domain:
+            for file_name in ls_result:
+                if file_name.startswith(domain):
+                    domlog_file_list.append(
+                        os.path.join(dom_log_dir, file_name))
+        else:
+            for file_name in ls_result:
+                domlog_file_list.append(
+                    os.path.join(dom_log_dir, file_name))
+        return domlog_file_list
+
+    def cat_log_to_list(self, domlog_file):
+        """cat's a logfile and stores in variable"""
+        return run_cmd_list_return([
+            'sudo',
+            'cat',
+            domlog_file
+        ])
+
+    def get_user_agent(self, browser_string):
+        """returns easily readable user_agent"""
+        split_string = browser_string.split()
+        result_string = []
+        for field in split_string:
+            if field == '(compatible;':
+                agent = split_string[split_string.index(field) + 1]
+                result_string.append(agent[:-1])
+            elif field.startswith('('):
+                result_string.append(field[1:])
+            if 'Chrome' in field:
+                if 'Edge' in field:
+                    result_string.append('edge')
+                else:
+                    result_string.append('chrome')
+            elif 'Firefox' in field:
+                result_string.append('firefox')
+            elif 'curl' in field:
+                result_string.append('curl')
+            elif 'Wget' in field:
+                result_string.append('wget')
+            elif 'WordPress' in field:
+                result_string.append('wordpress')
+        if not result_string:
+            return browser_string
+        if len(result_string) == 1:
+            result_string.append('Other')
+        return ', '.join(result_string)
+
+    def parse_log_line(self, line):
+        """Parse's a line from a logfile"""
+        parsed_line = {}
+        shplit_line = shplit(line)
+        i = 0
+        for field in PARSING_FIELDS:
+            parsed_line[field] = shplit_line[i]
+            i = i+1
+
+        split_request = parsed_line['full_request'].split()
+        parsed_line['type'] = split_request[0]
+        if len(split_request) >= 2:
+            parsed_line['uri'] = split_request[1]
+        else:
+            parsed_line['uri'] = '-'
+        if len(split_request) >= 3:
+            parsed_line['protocol'] = split_request[2]
+        else:
+            parsed_line['protocol'] = '-'
+        parsed_line['datetime'] = parsed_line['datetime'][1:]
+        parsed_line['offset'] = parsed_line['offset'][1:]
+        parsed_line['user_agent'] = self.get_user_agent(
+            parsed_line['browser_string'])
+        parsed_line['hour'] = parsed_line['datetime'].split(":")[1]
+        return parsed_line
+
+    def get_parsed_logs(self, user, domain):
+        """assembles a dict of parsed logs"""
+        unparsed_logs = {}
+        parsed_logs = {}
+        domlog_dir = self.get_user_domlog_dir(user)
+        domlog_file_list = self.get_domlog_file_list(
+            domlog_dir, domain=domain)
+        for domlog_file in domlog_file_list:
+            unparsed_logs[domlog_file] = self.cat_log_to_list(domlog_file)
+            parsed_logs[domlog_file] = []
+            for line in unparsed_logs[domlog_file]:
+                parsed_line = self.parse_log_line(line)
+                parsed_logs[domlog_file].append(parsed_line)
+        return parsed_logs
+
+
+class Report(object):
+    """Formats lists into tables"""
+    def __init__(self, parsed_logs, field_list, lines):
+        self.parsed_logs = parsed_logs
+        self.field_list = field_list
+        self.lines = lines
+        self.report_table = {}
+
+    def generate_report(self):
+        """Generates formatted table from report lists"""
+        field_names = []
+        self.field_list.sort()
+        for field in self.field_list:
+            field_names.extend([field, field + ' count'])
+        for log_name, log in self.parsed_logs.items():
+            field_lists = {}
+            this_report = PrettyTable(
+                field_names=field_names, header=True)
+            for field in self.field_list:
+                field_lists[field] = self.get_field_count(
+                    log, field, self.lines)
+            i = 0
+            rows = []
+            while i < (int(self.lines) - 1):
+                row = []
+                for field_name in self.field_list:
+                    if i < len(field_lists[field_name]):
+                        row.extend([
+                            field_lists[field_name][i][0],
+                            field_lists[field_name][i][1]])
+                    else:
+                        row.extend([
+                            str(' '),
+                            str(' ')])
+                rows.append(row)
+                i = i + 1
+            for row in rows:
+                this_report.add_row(row)
+            for field in field_names:
+                this_report.align[field] = "l"
+            self.report_table[log_name] = this_report
+
+    def get_field_count(self, parsed_log, field, lines):
+        """creates count lists"""
+        field_items = []
+        for line in parsed_log:
+            field_items.append(line[field].strip())
+        field_counter = Counter(field_items)
+        most_common = field_counter.most_common(int(lines))
+        most_common.reverse()
+        return most_common
+
+    def format_title_header(self, title):
+        """formats the title header"""
+        top_bottom_border = str("-" * (len(title) + 8))
+        formatted_title = str(
+            "\n\t+" + top_bottom_border + "+\n"
+            "\t|    " + title + "    |\n"
+            "\t+" + top_bottom_border + "+\n"
+        )
+        return formatted_title
+
+    def show(self):
+        """Method called to print report"""
+        self.generate_report()
+        for log_name, report in self.report_table.items():
+            title = self.format_title_header(log_name.split('/')[-1])
+            print(title)
+            print(report)
+
+
+class HourReport(Report):
+    """Subclass of Report: Creates a report of hits per hour"""
+    # def __init__(self, parsed_logs, field_list, lines):
+
+    def generate_report(self):
+        """Generates formatted table from report lists"""
+        hour_range = range(0, 24)
+        field_names = ['Time']
+        for hour in hour_range:
+            field_names.append(str(hour) + ':00')
+        self.report_table = {}
+        for log_name, log in self.parsed_logs.items():
+            this_report = PrettyTable(
+                field_names=field_names, header=True)
+            hourly_count = self.get_field_count(log, 'hour', 24)
+            i = 0
+            row = ['Hits']
+            for hour in hour_range:
+                row.append('0')
+            while i < 24:
+                for hour in hourly_count:
+                    if hour[0] == str(i):
+                        row[i + 1] = (str(hour[1]))
+                i = i + 1
+            this_report.add_row(row)
+            for field in field_names:
+                this_report.align[field] = "c"
+            self.report_table[log_name] = this_report
+
+
+class SummaryReport(Report):
+    """Subclass of Report. Generates a report summarizing multiple fields"""
+
+    def show(self):
+        """Method called to print report"""
+        sum_msg = str(
+            "\n\t+----------------------------+\n"
+            "\t|   Apache DomLog Summary    |\n"
+            "\t+----------------------------+\n"
+        )
+        print(sum_msg)
+        self.generate_report()
+        for log_name, report in self.report_table.items():
+            title = self.format_title_header(log_name.split('/')[-1])
+            print(title)
+            print(report)
+
+        hourly_report = HourReport(self.parsed_logs, 'hour', 25)
+        hourly_report.show()
+
+
+def main():
+    """Go Start Here"""
+    cmd_function, cmd_options, cmd_flags = store_args(sys.argv)
+
+    valid_options = parse_options(cmd_options)
+    parse_function(cmd_function, valid_options)
+
+
+if __name__ == "__main__":
+    main()
