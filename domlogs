@@ -299,7 +299,12 @@ class LogFunctions(object):
     def parse_log_line(self, line):
         """Parse's a line from a logfile"""
         parsed_line = {}
-        shplit_line = shplit(line)
+        try:
+            shplit(line)
+        except ValueError:
+            return False
+        else:
+            shplit_line = shplit(line)
         i = 0
         for field in PARSING_FIELDS:
             parsed_line[field] = shplit_line[i]
@@ -334,7 +339,8 @@ class LogFunctions(object):
             parsed_logs[domlog_file] = []
             for line in unparsed_logs[domlog_file]:
                 parsed_line = self.parse_log_line(line)
-                parsed_logs[domlog_file].append(parsed_line)
+                if parsed_line:
+                    parsed_logs[domlog_file].append(parsed_line)
         return parsed_logs
 
 
