@@ -411,7 +411,7 @@ class Report(object):
             mergefield_data = [line.get(field) for field in fields]
             merged_data = "\t".join(mergefield_data)
         mergefield_counter = Counter(mergefield_items)
-        most_common = field_counter.most_common(int(lines))
+        most_common = mergefield_counter.most_common(int(lines))
         most_common.reverse()
         return most_common
 
